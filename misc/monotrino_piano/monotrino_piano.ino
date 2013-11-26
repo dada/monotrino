@@ -1,5 +1,8 @@
 #include <SPI.h>
 
+// uncomment for serial monitor
+// #define DEBUG 1
+
 #define AROUND(x, y) x >= y-10 && x <= y+10
 #define BUTTONDELAY 20
 
@@ -19,10 +22,13 @@ int lastAnalogReadK5 = 0;
 
 int status = STATUS_OFF;
 
-int gliding = 0;
-int glide_inc = 0;
+bool gliding = false;
+int glideLength = 0;
+long glideStart = 0;
+float glideIncPerMilli = 0.0;
 int last_pitch = 0;
 int current_pitch = 0;
+int target_pitch = 0;
 
 int envLength = 0;
 long envStart = 0;
@@ -30,10 +36,6 @@ float envIncPerMilli = 0.0;
 
 int current_cutoff = 0;
 int cutoff_knob = 0;
-
-int note_to_pitch[7] = {
-    768, 876, 984, 1038, 1146, 1254, 1362
-};
 
 void setup() {
 #ifdef DEBUG
@@ -96,6 +98,23 @@ void loop() {
         }
     }
 
+    if(status == STATUS_PLAY && gliding) {
+        long millisPlayed = millis() - glideStart;
+        current_pitch = last_pitch + int(glideIncPerMilli * (float)millisPlayed);
+        if(glideIncPerMilli < 0.0 && current_pitch < target_pitch) {
+            current_pitch = target_pitch;
+            gliding = false;
+        }
+        if(glideIncPerMilli > 0.0 && current_pitch > target_pitch) {
+            current_pitch = target_pitch;
+            gliding = false;
+        }
+        writeToDAC(current_pitch, current_cutoff);
+        if(millisPlayed > glideLength) {
+            gliding = false;
+        }
+    }
+
     if( buttonLastChecked == 0 ) // see if this is the first time checking the buttons
         buttonLastChecked = millis()+BUTTONDELAY;  // force a check this cycle
     if( millis() - buttonLastChecked > BUTTONDELAY ) { // make sure a reasonable delay passed
@@ -104,12 +123,22 @@ void loop() {
             if(b > 0) {
                 digitalWrite(3, HIGH);
                 envStart = millis();
-                current_pitch = note_to_pitch[12-b];
+                glideLength = analogRead(7);
+                if(l != 0 && glideLength > 0) {
+                    last_pitch = current_pitch;
+                    target_pitch = noteToPitch(2, b);
+                    glideIncPerMilli = (float)(target_pitch-last_pitch) / (float)glideLength;
+                    glideStart = millis();
+                    gliding = true;
+                } else {
+                    current_pitch = noteToPitch(2, b);
+                    gliding = false;
+                }
                 envLength = analogRead(4);
                 envIncPerMilli = (float)cutoff_knob / (float)envLength;
 #ifdef DEBUG
-                Serial.print("ATTACK: startMillis=");
-                Serial.print(startMillis);
+                Serial.print("ATTACK: envStart=");
+                Serial.print(envStart);
                 Serial.print(" envLength=");
                 Serial.print(envLength);
                 Serial.print(" envIncPerMilli=");
@@ -123,6 +152,7 @@ void loop() {
                     current_cutoff = cutoff_knob;
                     status = STATUS_PLAY;
                 }
+
                 writeToDAC(current_pitch, current_cutoff);
             } else {
                 if(l > 0) {
@@ -209,4 +239,11 @@ void writeToDAC(int p, int c) {
     data = lowByte(c);
     SPI.transfer(data);
     digitalWrite(10, HIGH);
+}
+
+int noteToPitch(int octave, int note) {
+    int pitch = 768; // C2
+    pitch += (octave - 2) * 648;
+    pitch += (note - 1) * 54;
+    return pitch;
 }
