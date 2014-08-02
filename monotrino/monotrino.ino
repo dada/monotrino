@@ -333,7 +333,7 @@ void loop_seq_common() {
     }
     if(button_cmd == BUTTON_PLAY) {
         if(mode == MODE_SEQ_INPUT) {
-            mode = MODE_SET_EDIT;
+            mode = MODE_SEQ_EDIT;
             initMode(mode);
         }
         if(status == STATUS_PLAY) {
