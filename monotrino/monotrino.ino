@@ -61,9 +61,16 @@ long millis_per_step = 15000/120;
 int pattern[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 // On the run - Pink Floyd (C2  Eb2 G2  F2  Eb2 F2  Bb2 C3)
 // int pattern[16] = { 25, 28, 32, 30, 28, 30, 35, 37, 25, 28, 32, 30, 28, 30, 35, 37 };
+byte pattern_cutoff[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+byte pattern_envmod[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+byte pattern_decay[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+byte pattern_glide[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 int selected_step = 0;
 int modified_pitch;
-
+byte modified_cutoff = 0;
+byte modified_envmod = 0;
+byte modified_decay = 0;
+byte modified_glide = 0;
 int bpm = 0;
 
 bool gliding = false;
@@ -87,6 +94,8 @@ int last_k1_display = 0;
 int last_k2_display = 0;
 int last_k3_display = 0;
 int last_k4_display = 0;
+
+long printed_step_data = 0;
 
 #define CHAR_STEP_EMPTY byte(0)
 #define CHAR_STEP_EMPTY_Q 1
@@ -165,6 +174,14 @@ void loop() {
 
 void loop_splash() {
     if(millis() - env_start > 2000) {
+        // init tempo
+        int t = analogRead(3);
+        if(t < 512) {
+            bpm = map(t, 0, 512, 30, 120);
+        } else {
+            bpm = map(t, 512, 1023, 120, 300);
+        }
+        millis_per_step = (int)(15000.0/(float)bpm );
         initMode(MODE_SEQ_INPUT);
     }
 }
@@ -179,7 +196,10 @@ void initMode(byte m) {
         createSeqChars();
         printPattern();
         lcd.setCursor(0, 1);
-        lcd.print("p1 --- X--- T120");
+        lcd.print("p1 --");
+        lcd.print(current_octave);
+        lcd.print("      ");
+        printTempo();
         lcd.cursor();
         lcd.blink();
         break;
@@ -187,7 +207,10 @@ void initMode(byte m) {
         createSeqChars();
         printPattern();
         lcd.setCursor(0, 1);
-        lcd.print("e1 --- X--- T120");
+        lcd.print("e1 --");
+        lcd.print(current_octave);
+        lcd.print("      ");
+        printTempo();
         selected_step = 0;
         printStep(selected_step);
         lcd.setCursor(selected_step, 0);
@@ -198,7 +221,12 @@ void initMode(byte m) {
         createSeqChars();
         printPattern();
         lcd.setCursor(0, 1);
-        lcd.print("i1 --- X--- T120");
+        lcd.print("i1 --");
+        lcd.print(current_octave);
+        lcd.print("      ");
+        printTempo();
+        selected_step = 0;
+        lcd.setCursor(selected_step, 0);
         lcd.cursor();
         lcd.blink();
         break;
@@ -296,17 +324,18 @@ void loop_seq_common() {
     }
     if(b != bpm) {
         bpm = b;
-        lcd.setCursor(12, 1);
-        lcd.print("T");
-        if(bpm < 100) lcd.print(" ");
-        lcd.print(bpm);
-        millis_per_step = int(15000.0/(float)bpm );
+        printTempo();
+        millis_per_step = (int)(15000.0/(float)bpm );
 #if DEBUG
         Serial.print("millis_per_step=");
         Serial.println(millis_per_step);
 #endif
     }
     if(button_cmd == BUTTON_PLAY) {
+        if(mode == MODE_SEQ_INPUT) {
+            mode = MODE_SET_EDIT;
+            initMode(mode);
+        }
         if(status == STATUS_PLAY) {
 #if DEBUG
             Serial.println("STOPPING");
@@ -360,7 +389,7 @@ void loop_seq_common() {
                         env_start = millis_now;
                         env_length = release_time;
                         current_cutoff = (int)cutoff_top;
-                        env_inc_per_milli = cutoff_top / (float)env_length;
+                        env_inc_per_milli = cutoff_top  / (float)env_length;
                     }
                 }
                 break;
@@ -392,7 +421,18 @@ void loop_seq_common() {
 }
 
 void initStep() {
-    current_cutoff = map(analogRead(6), 0, 1023, cutoff_min, cutoff_max);
+    int cutoff = map(analogRead(6), 0, 1023, cutoff_min, cutoff_max);
+    int ck = map(cutoff, cutoff_min, cutoff_max, 0, 100);
+    if(ck != cutoff_knob) {
+        printKnob('C', ck);
+        cutoff_knob = ck;
+    }
+    if(pattern_cutoff[current_step] != 0) {
+        float c = (float)cutoff * ((pattern_cutoff[current_step]-127.0)/256.0 + 1.0);
+        cutoff = (int) c;
+        if(cutoff > cutoff_max) cutoff = cutoff_max;
+        if(cutoff < cutoff_min) cutoff = cutoff_min;
+    }
 /*
     int cutoff = map(analogRead(6), 0, 1023, cutoff_min, cutoff_max);
     if(current_cutoff != cutoff) {
@@ -405,15 +445,26 @@ void initStep() {
         printKnob('E', envmod);
         current_envmod = envmod;
     }
+    if(pattern_envmod[current_step] != 0) {
+        float c = (float)current_envmod * ((pattern_envmod[current_step]-127.0)/256.0 + 1.0);
+        current_envmod = (int) c;
+        if(current_envmod > 80) current_envmod = 80;
+        if(current_envmod < 0) current_envmod = 0;
+    }
     int decay = map(analogRead(5), 0, 1023, 20, 300);
     if(current_decay != decay) {
         printKnob('D', decay);
         current_decay = decay;
     }
-    cutoff_start = (float)current_cutoff;
-    cutoff_zero = (float)current_cutoff * (100.0 - (float)current_envmod / 100.0);
+    if(pattern_decay[current_step] != 0) {
+        float c = (float)current_decay * ((pattern_decay[current_step]-127.0)/256.0 + 1.0);
+        current_decay = (int) c;
+        if(current_decay > 300) current_envmod = 300;
+        if(current_envmod < 20) current_envmod = 20;
+    }
+    cutoff_zero = (float)cutoff * (100.0 - (float)current_envmod / 100.0);
     // cutoff_zero = (float)current_cutoff;
-    cutoff_top = (float)current_cutoff + ((float)cutoff_max - (float)current_cutoff) * (float)current_envmod / 100.0;
+    cutoff_top = (float)cutoff + ((float)cutoff_max - (float)cutoff) * (float)current_envmod / 100.0;
     int total_length = current_decay;
     hold_time = (int)( (float)total_length * (100.0 - (float)current_envmod) / 100.0 );
     attack_time = 10;
@@ -429,11 +480,14 @@ void initStep() {
     lcd.print(">");
     lcd.print(release_time);
 #endif
-    env_status = STATUS_DECLICK;
+    env_status = STATUS_ATTACK;
     env_length = attack_time;
-    current_cutoff = (int) cutoff_zero;
+    // if(envmod == 0) {
+        // current_cutoff = (int) cutoff_zero;
+    // }
     // env_inc_per_milli = (cutoff_top - cutoff_zero) / (float)env_length;
-    env_inc_per_milli = (cutoff_zero - current_cutoff) / (float)env_length;
+    // env_inc_per_milli = (cutoff_zero - current_cutoff) / (float)env_length;
+    env_inc_per_milli = (cutoff_top - (float)current_cutoff) / (float)env_length;
     env_start = millis();
 }
 
@@ -450,6 +504,7 @@ void loop_seq_input() {
         lcd.setCursor(3, 1);
         lcd.print("--");
         lcd.print(current_octave);
+        lcd.setCursor(current_step, 0);
         button_cmd = 0;
         break;
     case BUTTON_OCTDN:
@@ -458,6 +513,7 @@ void loop_seq_input() {
         lcd.setCursor(3, 1);
         lcd.print("--");
         lcd.print(current_octave);
+        lcd.setCursor(current_step, 0);
         button_cmd = 0;
         break;
     case BUTTON_REST:
@@ -493,12 +549,49 @@ void loop_seq_input() {
 }
 
 void loop_seq_edit() {
+
+    if(printed_step_data != 0 && millis() - printed_step_data > 2000) {
+        resetStepData();
+    }
+
+    if(status != STATUS_PLAY) {
+        int k2 = analogRead(4);
+        if(abs(k2-lastAnalogReadK2) > 3) {
+            lastAnalogReadK2 = k2;
+            modified_envmod = map(k2, 0, 1023, 1, 255);
+            resetStepData();
+            printKnobWithSign('E', map(modified_envmod, 1, 255, -50, 51));
+        }
+        int k3 = analogRead(5);
+        if(abs(k3-lastAnalogReadK3) > 3) {
+            lastAnalogReadK3 = k3;
+            modified_decay = map(k3, 0, 1023, 1, 255);
+            resetStepData();
+            printKnobWithSign('D', map(modified_decay, 1, 255, -50, 51));
+        }
+        int k4 = analogRead(6);
+        if(abs(k4-lastAnalogReadK4) > 3) {
+            lastAnalogReadK4 = k4;
+            modified_cutoff = map(k4, 0, 1023, 1, 255);
+            resetStepData();
+            printKnobWithSign('C', map(modified_cutoff, 1, 255, -50, 51));
+        }
+        int k5 = analogRead(7);
+        if(abs(k5-lastAnalogReadK5) > 3) {
+            lastAnalogReadK5 = k5;
+            modified_glide = map(k5, 0, 1023, 0, 100);
+            resetStepData();
+            printKnob('G', modified_glide);
+        }
+    }
+
     loop_seq_common();
     switch(button_cmd) {
     case BUTTON_OCTUP:
         current_octave++;
         if(current_octave > 4) current_octave = 4;
         if(modified_pitch == 0) {
+            resetStepData();
             lcd.setCursor(3, 1);
             lcd.print("--");
             lcd.print(current_octave);
@@ -507,20 +600,24 @@ void loop_seq_edit() {
             int note = modified_pitch - (octave * 12);
             printNote(current_octave, note);
             modified_pitch = noteNumber(current_octave, note);
+            resetStepData();
             printNoteNumber(modified_pitch);
         }
+        lcd.setCursor(current_step, 0);
         button_cmd = 0;
         break;
     case BUTTON_OCTDN:
         current_octave--;
         if(current_octave < 1) current_octave = 1;
         if(modified_pitch == 0) {
+            resetStepData();
             lcd.setCursor(3, 1);
             lcd.print("--");
             lcd.print(current_octave);
         } else {
             int octave = modified_pitch / 12;
             int note = modified_pitch - (octave * 12);
+            resetStepData();
             printNote(current_octave, note);
             modified_pitch = noteNumber(current_octave, note);
             printNoteNumber(modified_pitch);
@@ -530,32 +627,57 @@ void loop_seq_edit() {
     case BUTTON_RIGHT:
         if(selected_step < 15) selected_step++;
         printNoteNumber(pattern[selected_step]);
+        printStepData();
         modified_pitch = pattern[selected_step];
+        modified_envmod = 0;
+        modified_decay = 0;
+        modified_cutoff = 0;
+        modified_glide = 0;
         button_cmd = 0;
         break;
     case BUTTON_LEFT:
         if(selected_step > 0) selected_step--;
         printNoteNumber(pattern[selected_step]);
+        printStepData();
         modified_pitch = pattern[selected_step];
+        modified_envmod = 0;
+        modified_decay = 0;
+        modified_cutoff = 0;
+        modified_glide = 0;
         button_cmd = 0;
         break;
     case BUTTON_ENTER:
         pattern[selected_step] = modified_pitch;
+        if(modified_envmod != 0)
+            pattern_envmod[selected_step] = modified_envmod;
+        if(modified_decay != 0)
+            pattern_decay[selected_step] = modified_decay;
+        if(modified_cutoff != 0)
+            pattern_cutoff[selected_step] = modified_cutoff;
+        if(modified_glide != 0)
+            pattern_glide[selected_step] = modified_glide;
         printStep(selected_step);
         if(selected_step < 15) selected_step++;
         printNoteNumber(pattern[selected_step]);
+        printStepData();
         modified_pitch = pattern[selected_step];
+        modified_envmod = 0;
+        modified_decay = 0;
+        modified_cutoff = 0;
+        modified_glide = 0;
         button_cmd = 0;
         break;
     case BUTTON_REST:
         if(modified_pitch != 0) {
             modified_pitch = 0;
+            resetStepData();
             lcd.setCursor(3, 1);
             lcd.print("--");
             lcd.print(current_octave);
         } else {
             if(selected_step > 0) {
                 modified_pitch = 255;
+                resetStepData();
                 printNoteNumber(pattern[selected_step-1]);
                 printStep(selected_step);
             }
@@ -782,6 +904,93 @@ void printKnob(char letter, int value) {
         lcd.print(" ");
     }
     lcd.print(value);
+}
+
+void printKnobWithSign(char letter, int value) {
+    lcd.setCursor(7, 1);
+    lcd.print(letter);
+    if(value == 0) {
+        lcd.print("  ");
+    } else {
+        if(value > 0) {
+            if(value < 10) {
+                lcd.print(" ");
+            }
+            lcd.print("+");
+        } else {
+            if(value > -10) {
+                lcd.print(" ");
+            }
+        }
+    }
+    lcd.print(value);
+}
+
+void printValueWithSign(int value) {
+    if(value == 0) {
+        lcd.print("  ");
+    } else {
+        if(value > 0) {
+            if(value < 10) {
+                lcd.print(" ");
+            }
+            lcd.print("+");
+        } else {
+            if(value > -10) {
+                lcd.print(" ");
+            }
+        }
+    }
+    lcd.print(value);
+}
+
+void printStepData() {
+    lcd.setCursor(7, 0);
+    lcd.print("E");
+    if(pattern_envmod[selected_step] == 0) {
+        lcd.print("  0");
+    } else {
+        printValueWithSign(map(pattern_envmod[selected_step], 1, 255, -50, 50));
+    }
+    lcd.print(" D");
+    if(pattern_decay[selected_step] == 0) {
+        lcd.print("  0");
+    } else {
+        printValueWithSign(map(pattern_decay[selected_step], 1, 255, -50, 50));
+    }
+    lcd.setCursor(7, 1);
+    lcd.print("C");
+    if(pattern_cutoff[selected_step] == 0) {
+        lcd.print("  0");
+    } else {
+        printValueWithSign(map(pattern_cutoff[selected_step], 1, 255, -50, 50));
+    }
+    lcd.print(" G");
+    if(pattern_glide[selected_step] == 0) {
+        lcd.print("  0");
+    } else {
+        printValueWithSign(map(pattern_glide[selected_step], 1, 255, -50, 50));
+    }
+    printed_step_data = millis();
+}
+
+void resetStepData() {
+    printed_step_data = 0;
+    printPattern();
+    printTempo();
+    lcd.setCursor(selected_step, 0);
+}
+
+void printTempo() {
+    lcd.setCursor(12, 1);
+    lcd.print("T");
+    if(bpm < 100) {
+        lcd.print(" ");
+    }
+    if(bpm < 10) {
+        lcd.print(" ");
+    }
+    lcd.print(bpm);
 }
 
 int noteToPitch(int octave, int note) {
