@@ -77,9 +77,7 @@ bool gliding = false;
 int glide_length = 0;
 long glide_start = 0;
 float glide_inc_per_milli = 0.0;
-int last_pitch = 0;
-int current_pitch = 0;
-int target_pitch = 0;
+long current_pitch = 0;
 
 int env_length = 0;
 long env_start = 0;
@@ -113,6 +111,7 @@ int attack_time;
 int release_time;
 int current_envmod;
 int current_decay;
+int current_glide;
 
 void setup() {
 #ifdef DEBUG
@@ -347,7 +346,7 @@ void loop_seq_common() {
             Serial.println("PLAYING");
 #endif
             status = STATUS_PLAY;
-            writeToDAC(noteNumberToPitch(pattern[current_step]), current_cutoff);
+            writeToDAC(current_pitch, current_cutoff);
             digitalWrite(3, HIGH);
             millis_step_start = millis();
         }
@@ -374,11 +373,27 @@ void loop_seq_common() {
             }
         } else {
             unsigned long millis_played = millis_now - env_start;
+            int target_pitch = noteNumberToPitch(pattern[current_step]);
+            current_pitch = target_pitch;
+            if(gliding) {
+                current_pitch = glide_start + int(glide_inc_per_milli * (float)millis_played);
+                if(glide_inc_per_milli < 0.0 && current_pitch < target_pitch) {
+                    current_pitch = target_pitch;
+                    gliding = false;
+                }
+                if(glide_inc_per_milli > 0.0 && current_pitch > target_pitch) {
+                    current_pitch = target_pitch;
+                    gliding = false;
+                }
+                if(millis_played > glide_length) {
+                    gliding = false;
+                }
+            }
             switch(env_status) {
             case STATUS_ATTACK:
                 current_cutoff = int(cutoff_zero + env_inc_per_milli * (float)millis_played);
                 if(current_cutoff > (int)cutoff_top) { current_cutoff = (int)cutoff_top; }
-                writeToDAC(noteNumberToPitch(pattern[current_step]), current_cutoff);
+                writeToDAC(current_pitch, current_cutoff);
                 if(millis_played >= env_length) {
                     if(hold_time > 0) {
                         env_status = STATUS_HOLD;
@@ -401,6 +416,9 @@ void loop_seq_common() {
                     current_cutoff = (int)cutoff_top;
                     env_inc_per_milli = cutoff_top / (float)env_length;
                 }
+                if(gliding) {
+                    writeToDAC(current_pitch, current_cutoff);
+                }
                 break;
             case STATUS_RELEASE:
                 current_cutoff = int(cutoff_top - env_inc_per_milli * (float)millis_played);
@@ -408,7 +426,7 @@ void loop_seq_common() {
                     env_status = STATUS_OFF;
                     digitalWrite(3, LOW);
                 } else {
-                    writeToDAC(noteNumberToPitch(pattern[current_step]), current_cutoff);
+                    writeToDAC(current_pitch, current_cutoff);
                 }
                 if(millis_played >= env_length) {
                     env_status = STATUS_OFF;
@@ -461,6 +479,43 @@ void initStep() {
         current_decay = (int) c;
         if(current_decay > 300) current_envmod = 300;
         if(current_envmod < 20) current_envmod = 20;
+    }
+
+    int glide = map(analogRead(7), 0, 1023, 0, 100);
+    if(current_glide != glide) {
+        printKnob('G', glide);
+        current_glide = glide;
+    }
+    if(pattern_glide[current_step] != 0) {
+        float c = (float)current_glide * ((float)pattern_glide[current_step]/100.0);
+        glide_length = (int)((float)millis_per_step * c / 100.0);
+        if(glide_length > 0) {
+            printKnob('g', glide_length);
+            int x = current_step == 0 ? 15 : current_step-1;
+            glide_start = 0;
+            int i = x;
+            while(glide_start == 0 && i > 0) {
+                if(pattern[i] != 0) {
+                    glide_start = noteNumberToPitch(pattern[i]);
+                }
+                i--;
+            }
+            if(glide_start != 0) {
+                int target_pitch = noteNumberToPitch(pattern[current_step]);
+                gliding = true;
+                glide_inc_per_milli = (float)(target_pitch-glide_start) / (float)glide_length;
+                current_pitch = glide_start;
+            } else {
+                gliding = false;
+                current_pitch = noteNumberToPitch(pattern[current_step]);
+            }
+        } else {
+            gliding = false;
+            current_pitch = noteNumberToPitch(pattern[current_step]);
+        }
+    } else {
+        gliding = false;
+        current_pitch = noteNumberToPitch(pattern[current_step]);
     }
     cutoff_zero = (float)cutoff * (100.0 - (float)current_envmod / 100.0);
     // cutoff_zero = (float)current_cutoff;
@@ -693,6 +748,7 @@ void loop_seq_edit() {
             writeToDAC(noteNumberToPitch(modified_pitch), current_cutoff);
             digitalWrite(3, HIGH);
         }
+        printNoteNumber(modified_pitch);
         button_note = 0;
     }
 
@@ -966,11 +1022,13 @@ void printStepData() {
         printValueWithSign(map(pattern_cutoff[selected_step], 1, 255, -50, 50));
     }
     lcd.print(" G");
-    if(pattern_glide[selected_step] == 0) {
-        lcd.print("  0");
-    } else {
-        printValueWithSign(map(pattern_glide[selected_step], 1, 255, -50, 50));
+    if(pattern_glide[selected_step] < 100) {
+        lcd.print(" ");
     }
+    if(pattern_glide[selected_step] < 10) {
+        lcd.print(" ");
+    }
+    lcd.print(pattern_glide[selected_step]);
     printed_step_data = millis();
 }
 
