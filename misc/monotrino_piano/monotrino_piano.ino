@@ -1,10 +1,13 @@
 #include <SPI.h>
+#include <LiquidCrystal.h>
 
 // uncomment for serial monitor
 // #define DEBUG 1
 
 #define AROUND(x, y) x >= y-10 && x <= y+10
 #define BUTTONDELAY 20
+
+LiquidCrystal lcd(4, 5, 6, 7, 8, 9);
 
 int l = 0;
 long buttonLastChecked = 0;
@@ -37,6 +40,11 @@ float envIncPerMilli = 0.0;
 int current_cutoff = 0;
 int cutoff_knob = 0;
 
+int last_k1_display = 0;
+int last_k2_display = 0;
+int last_k3_display = 0;
+int last_k4_display = 0;
+
 void setup() {
 #ifdef DEBUG
     Serial.begin(9600);
@@ -54,6 +62,7 @@ void setup() {
     pinMode(3, OUTPUT);
     pinMode(10, OUTPUT);
     SPI.begin();
+    lcd.begin(16, 2);
 }
 
 void loop() {
@@ -95,6 +104,8 @@ void loop() {
         if(millisPlayed >= envLength) {
             status = STATUS_OFF;
             digitalWrite(3, LOW);
+            lcd.setCursor(0, 0);
+            lcd.print("   ");
         }
     }
 
@@ -127,11 +138,13 @@ void loop() {
                 if(l != 0 && glideLength > 0) {
                     last_pitch = current_pitch;
                     target_pitch = noteToPitch(2, b);
+                    printNote(2, b);
                     glideIncPerMilli = (float)(target_pitch-last_pitch) / (float)glideLength;
                     glideStart = millis();
                     gliding = true;
                 } else {
                     current_pitch = noteToPitch(2, b);
+                    printNote(2, b);
                     gliding = false;
                 }
                 envLength = analogRead(4);
@@ -164,18 +177,61 @@ void loop() {
                     } else {
                         digitalWrite(3, LOW);
                         status = STATUS_OFF;
+                        lcd.setCursor(0, 0);
+                        lcd.print("   ");                        
                     }
                 } else {
                     digitalWrite(3, LOW);
                     status = STATUS_OFF;
+                    lcd.setCursor(0, 0);
+                    lcd.print("   ");                    
                 }
             }
             l = b;
         }
         buttonLastChecked = millis();
     }
+    
+    // TODO: don't do it every loop
+    int k1 = map(analogRead(4), 0, 1023, 0, 99);
+    if(k1 != last_k1_display) {
+        lcd.setCursor(0, 1);
+        lcd.print("A");
+        writePercent(k1, 1, 1);
+        last_k1_display = k1;
+    }
+    int k2 = map(analogRead(5), 0, 1023, 0, 99);
+    if(k2 != last_k2_display) {
+        lcd.setCursor(4, 1);
+        lcd.print("R");
+        writePercent(k2, 5, 1);
+        last_k2_display = k2;
+    }
+    int k3 = map(analogRead(6), 0, 1023, 0, 99);
+    if(k3 != last_k3_display) {
+        lcd.setCursor(8, 1);
+        lcd.print("C");
+        writePercent(k3, 9, 1);
+        last_k3_display = k3;
+    }
+    int k4 = map(analogRead(7), 0, 1023, 0, 99);
+    if(k4 != last_k4_display) {
+        lcd.setCursor(12, 1);
+        lcd.print("G");
+        writePercent(k4, 13, 1);
+        last_k4_display = k4;
+    }
+        
 }
 
+int writePercent(int v, int x, int y) {
+    lcd.setCursor(x, y);
+    if(v < 10) {
+        lcd.print(" ");
+    }
+    lcd.print(v);
+}
+    
 int readButtons() {
     int a = analogRead(0);
     if(AROUND(a, 247)) {
@@ -241,6 +297,25 @@ void writeToDAC(int p, int c) {
     digitalWrite(10, HIGH);
 }
 
+void printNote(int octave, int note) {
+    lcd.setCursor(0, 0);
+    switch(note) {
+        case 1: lcd.print("C"); break;
+        case 2: lcd.print("C#"); break;
+        case 3: lcd.print("D"); break;
+        case 4: lcd.print("D#"); break;
+        case 5: lcd.print("E"); break;
+        case 6: lcd.print("F"); break;
+        case 7: lcd.print("F#"); break;
+        case 8: lcd.print("G"); break;
+        case 9: lcd.print("G#"); break;
+        case 10: lcd.print("A"); break;
+        case 11: lcd.print("Bb"); break;
+        case 12: lcd.print("B"); break;
+    }
+    lcd.print(octave);
+    lcd.print(" ");
+}
 int noteToPitch(int octave, int note) {
     int pitch = 768; // C2
     pitch += (octave - 2) * 648;
