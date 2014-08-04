@@ -490,11 +490,12 @@ void initStep() {
         float c = (float)current_glide * ((float)pattern_glide[current_step]/100.0);
         glide_length = (int)((float)millis_per_step * c / 100.0);
         if(glide_length > 0) {
-            printKnob('g', glide_length);
+            // DEBUG: print glide length (in milliseconds)
+            // printKnob('g', glide_length);
             int x = current_step == 0 ? 15 : current_step-1;
             glide_start = 0;
             int i = x;
-            while(glide_start == 0 && i > 0) {
+            while(glide_start == 0 && i > -1) {
                 if(pattern[i] != 0) {
                     glide_start = noteNumberToPitch(pattern[i]);
                 }
